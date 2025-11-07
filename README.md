@@ -48,7 +48,7 @@ To train the model from scratch, you need to download the preprocessed lmdb file
 * `PDBbind_v2020_pocket10_processed_final.lmdb`
 * `PDBbind_pocket10_split.pt`
 
-To process the dataset from scratch, you need to download PDBbind_v2020 from [here](http://www.pdbbind.org.cn/download.php), save it in `data`, unzip it, and run the following scripts in `data`:
+To process the dataset from scratch, you need to download PDBbind_v2020 from [here](https://www.pdbbind-plus.org.cn/download), save it in `data`, unzip it, and run the following scripts in `data`:
 * [clean_pdbbind.py](data/clean_pdbbind.py) will clean the original dataset, extract the binding affinity and calculate QED, SA, LogP, and TPSA of ligands. It will generate a `index.pkl` file and save it in `data/PDBbind_v2020` folder.
     ```bash
     python clean_pdbbind.py --source PDBbind_v2020
