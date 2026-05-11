@@ -86,6 +86,7 @@ def evaluate_one(path, protein_path, docking_mode, exhaustiveness, box_center):
         "tpsa": "",
         "vina_score_only": "",
         "vina_min": "",
+        "vina_dock": "",
         "error": "",
     }
 
@@ -131,6 +132,10 @@ def evaluate_one(path, protein_path, docking_mode, exhaustiveness, box_center):
                 row["vina_min"] = task.run(
                     mode="minimize", exhaustiveness=exhaustiveness
                 )[0]["affinity"]
+            if docking_mode in ("dock", "all_dock"):
+                row["vina_dock"] = task.run(
+                    mode="dock", exhaustiveness=exhaustiveness
+                )[0]["affinity"]
 
     except Exception as exc:
         row["error"] = repr(exc)
@@ -147,7 +152,7 @@ def main():
         "--docking_mode",
         type=str,
         default="all",
-        choices=["none", "score_only", "minimize", "all"],
+        choices=["none", "score_only", "minimize", "all", "dock", "all_dock"],
     )
     parser.add_argument("--exhaustiveness", type=int, default=16)
     parser.add_argument(
@@ -187,6 +192,7 @@ def main():
         "tpsa",
         "vina_score_only",
         "vina_min",
+        "vina_dock",
         "error",
     ]
     with open(out, "w", newline="") as f:
@@ -198,7 +204,7 @@ def main():
     print("Total:", len(rows))
     print("Valid:", sum(int(row["valid"]) for row in rows))
 
-    for key in ["qed", "sa", "logp", "lipinski", "tpsa", "vina_score_only", "vina_min"]:
+    for key in ["qed", "sa", "logp", "lipinski", "tpsa", "vina_score_only", "vina_min", "vina_dock"]:
         values = []
         for row in rows:
             if row[key] == "":
