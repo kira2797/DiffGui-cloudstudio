@@ -377,7 +377,7 @@ class DiffGui(Module):
         protein_node, protein_pos, protein_batch, 
         ligand_batch, halfedge_index, halfedge_batch, 
         batch_lab=None, gui_strength=None, 
-        bond_predictor=None, guidance=None
+        bond_predictor=None, guidance=None, frequency_guidance=None
     ):
         device = ligand_batch.device
         # # 1. get the init values (position, node and edge types)
@@ -473,6 +473,16 @@ class DiffGui(Module):
                                 ligand_edge_index, ligand_edge_batch, time_step)
                             delta = self.bond_guidance(gui_type, gui_scale, pred_bondpredictor, ligand_pos_in, ligand_halfedge_type_prev, log_halfedge_type)
                         ligand_pos_prev = ligand_pos_prev + delta
+            if frequency_guidance is not None:
+                with torch.enable_grad():
+                    delta = frequency_guidance(
+                        ligand_node_h_pert,
+                        ligand_pos_pert,
+                        ligand_batch,
+                        step,
+                        n_graphs,
+                    )
+                ligand_pos_prev = ligand_pos_prev + delta
 
             # 2.4 log update
             ligand_node_traj[i+1] = ligand_node_h_prev
@@ -499,7 +509,7 @@ class DiffGui(Module):
         frag_halfedge_type, frag_halfedge_index, frag_halfedge_batch,
         ligand_batch, halfedge_index, halfedge_batch, 
         batch_lab=None, gui_strength=None, 
-        bond_predictor=None, guidance=None, gen_mode=None
+        bond_predictor=None, guidance=None, gen_mode=None, frequency_guidance=None
     ):
         device = ligand_batch.device
         # # 1. get the init values (position, node and edge types)
@@ -624,6 +634,17 @@ class DiffGui(Module):
                                 ligand_edge_index, ligand_edge_batch, time_step)
                             delta = self.bond_guidance(gui_type, gui_scale, pred_bondpredictor, ligand_pos_in, ligand_halfedge_type_prev, log_halfedge_type)
                         ligand_pos_prev = ligand_pos_prev + delta
+            if frequency_guidance is not None:
+                with torch.enable_grad():
+                    delta = frequency_guidance(
+                        ligand_node_h_pert,
+                        ligand_pos_pert,
+                        ligand_batch,
+                        step,
+                        n_graphs,
+                    )
+                delta[frag_node_mask] = 0
+                ligand_pos_prev = ligand_pos_prev + delta
 
             # 2.6 update trajectory
             ligand_node_traj[i+1] = ligand_node_h_prev

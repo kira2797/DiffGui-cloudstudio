@@ -12,9 +12,18 @@ model:
 
 bond_predictor: ckpt/bond_trained.pt
 
+frequency_guidance:
+  enabled: False
+  checkpoint: ckpt/frequency_surrogate.pt
+  target_spectrum: outputs/sample_20260503_091114/frequency_target_spectrum.json
+  scale: 1.e-4
+  start_step: 0
+  end_step: 200
+  max_delta_norm: 0.05
+
 sample:
   seed: 2023
-  batch_size: 2
+  batch_size: 4
   num_mols: 10
   save_traj_prob: 0.02
   sample: True

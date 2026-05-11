@@ -16,6 +16,7 @@ from torch_scatter import scatter_sum
 from torch_geometric.data import Batch
 from models.model import DiffGui
 from models.bond_predictor import BondPredictor
+from models.frequency_surrogate import FrequencyGuidance, FrequencySurrogate, load_target_spectrum
 from utils.sample_utils import seperate_outputs
 from torch_geometric.transforms import Compose
 from utils.evaluation.atom_num_config import CONFIG
@@ -88,6 +89,61 @@ def pdb_to_pocket(pocket_pdb_path, ligand_sdf_path, frag_sdf_path):
 
     return data
 
+def cfg_get(config, key, default=None):
+    return config[key] if key in config else default
+
+def build_frequency_guidance(config, device, logger):
+    if 'frequency_guidance' not in config:
+        return None
+    freq_config = config.frequency_guidance
+    if not cfg_get(freq_config, 'enabled', False):
+        return None
+
+    checkpoint = cfg_get(freq_config, 'checkpoint', None)
+    target_spectrum_path = cfg_get(freq_config, 'target_spectrum', None)
+    if checkpoint in (None, 'None') or target_spectrum_path in (None, 'None'):
+        raise ValueError('frequency_guidance requires checkpoint and target_spectrum')
+
+    logger.info('Loading frequency surrogate: %s' % checkpoint)
+    ckpt_freq = torch.load(checkpoint, map_location=device)
+    surrogate = FrequencySurrogate(**ckpt_freq['model_config']).to(device)
+    surrogate.load_state_dict(ckpt_freq['model'])
+    surrogate.eval()
+    for param in surrogate.parameters():
+        param.requires_grad_(False)
+
+    target_spectrum = load_target_spectrum(target_spectrum_path, device)
+    if target_spectrum.numel() != ckpt_freq['model_config']['spectrum_dim']:
+        raise ValueError(
+            'Target spectrum dim %d does not match surrogate output dim %d'
+            % (target_spectrum.numel(), ckpt_freq['model_config']['spectrum_dim'])
+        )
+
+    end_step = cfg_get(freq_config, 'end_step', None)
+    if end_step == 'None':
+        end_step = None
+    max_delta_norm = cfg_get(freq_config, 'max_delta_norm', 0.05)
+    if max_delta_norm == 'None':
+        max_delta_norm = None
+    guidance = FrequencyGuidance(
+        surrogate=surrogate,
+        target_spectrum=target_spectrum,
+        scale=float(cfg_get(freq_config, 'scale', 1.e-4)),
+        start_step=int(cfg_get(freq_config, 'start_step', 0)),
+        end_step=None if end_step is None else int(end_step),
+        max_delta_norm=None if max_delta_norm is None else float(max_delta_norm),
+    )
+    logger.info(
+        'Frequency guidance enabled: scale=%s start_step=%s end_step=%s max_delta_norm=%s'
+        % (
+            guidance.scale,
+            guidance.start_step,
+            guidance.end_step,
+            guidance.max_delta_norm,
+        )
+    )
+    return guidance
+
 def main(args):
     # # Load configs
     config = load_config(args.config)
@@ -142,8 +198,7 @@ def main(args):
     aff = torch.tensor([float(config.model.aff)], device=args.device).unsqueeze(-1)
     batch_lab = torch.cat((logp, tpsa, sa, qed, aff), dim=1)
 
-    batch_size = config.sample.batch_size
-    batch_lab = torch.tensor([list(batch_lab[0]) for _ in range(batch_size)]).to(args.device)
+    batch_lab = batch_lab[0]
 
     # # Bond predictor and guidance
     if 'bond_predictor' in config:
@@ -163,6 +218,7 @@ def main(args):
         guidance = config.sample.guidance  # tuple: (guidance_type[entropy/uncertainty], guidance_scale)
     else:
         guidance = None
+    frequency_guidance = build_frequency_guidance(config, args.device, logger)
 
     # Load pocket or test set data
     if config.sample.mode == 'pocket':
@@ -207,8 +263,8 @@ def main(args):
                 logger.info('Too many failed molecules. Stop sampling.')
                 break
 
-            batch_size = args.batch_size if args.batch_size > 0 else config.sample.batch_size
             n_graphs = min(batch_size, (config.sample.num_mols - len(pool.finished))*2)
+            n_batch_lab = batch_lab.unsqueeze(0).repeat(n_graphs, 1)
             batch = Batch.from_data_list([data.clone() for _ in range(n_graphs)], follow_batch=featurizer.follow_batch).to(args.device)
 
             if config.sample.sample_method == "priori":
@@ -246,10 +302,11 @@ def main(args):
                     ligand_batch=batch_node,
                     halfedge_index=halfedge_index,
                     halfedge_batch=batch_halfedge,
-                    batch_lab=batch_lab,
+                    batch_lab=n_batch_lab,
                     gui_strength=config.sample.gui_strength,
                     bond_predictor=bond_predictor,
                     guidance=guidance,
+                    frequency_guidance=frequency_guidance,
                 )
             elif config.model.gen_mode in ('frag_cond', 'frag_diff'):
                 outputs = model.sample_frag(
@@ -266,11 +323,12 @@ def main(args):
                     ligand_batch=batch_node,
                     halfedge_index=halfedge_index,
                     halfedge_batch=batch_halfedge,
-                    batch_lab=batch_lab,
+                    batch_lab=n_batch_lab,
                     gui_strength=config.sample.gui_strength,
                     bond_predictor=bond_predictor,
                     guidance=guidance,
-                    gen_mode=config.model.gen_mode
+                    gen_mode=config.model.gen_mode,
+                    frequency_guidance=frequency_guidance,
                 )
 
             outputs = {key:[v.cpu().numpy() for v in value] for key, value in outputs.items()}
