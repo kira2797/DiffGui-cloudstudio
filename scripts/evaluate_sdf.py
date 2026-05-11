@@ -47,7 +47,29 @@ def mean_median(values):
     return float(np.mean(values)), float(np.median(values))
 
 
-def evaluate_one(path, protein_path, docking_mode, exhaustiveness):
+def pdb_box_center(pdb_path):
+    coords = []
+    with open(pdb_path, "r") as f:
+        for line in f:
+            if not (line.startswith("ATOM") or line.startswith("HETATM")):
+                continue
+            try:
+                coords.append(
+                    [
+                        float(line[30:38]),
+                        float(line[38:46]),
+                        float(line[46:54]),
+                    ]
+                )
+            except ValueError:
+                continue
+    if not coords:
+        raise ValueError("No atom coordinates found in %s" % pdb_path)
+    coords = np.asarray(coords, dtype=float)
+    return ((coords.min(axis=0) + coords.max(axis=0)) / 2.0).tolist()
+
+
+def evaluate_one(path, protein_path, docking_mode, exhaustiveness, box_center):
     row = {
         "mol_id": os.path.splitext(os.path.basename(path))[0],
         "sdf_path": path,
@@ -93,7 +115,14 @@ def evaluate_one(path, protein_path, docking_mode, exhaustiveness):
         if docking_mode != "none":
             if not protein_path:
                 raise ValueError("--protein is required when docking_mode is not none")
-            task = VinaDockingTask.from_generated_mol(mol, protein_path)
+            center = pdb_box_center(protein_path) if box_center == "pocket" else None
+            size_factor = None if box_center == "pocket" else 1.0
+            task = VinaDockingTask.from_generated_mol(
+                mol,
+                protein_path,
+                center=center,
+                size_factor=size_factor,
+            )
             if docking_mode in ("score_only", "all"):
                 row["vina_score_only"] = task.run(
                     mode="score_only", exhaustiveness=exhaustiveness
@@ -121,6 +150,13 @@ def main():
         choices=["none", "score_only", "minimize", "all"],
     )
     parser.add_argument("--exhaustiveness", type=int, default=16)
+    parser.add_argument(
+        "--box_center",
+        type=str,
+        default="ligand",
+        choices=["ligand", "pocket"],
+        help="Use generated ligand coordinates or receptor pocket coordinates as docking box center.",
+    )
     parser.add_argument("--out", type=str, default=None)
     args = parser.parse_args()
 
@@ -131,7 +167,7 @@ def main():
     out = args.out or os.path.join(os.path.dirname(sdf_dir), "sdf_eval.csv")
 
     rows = [
-        evaluate_one(path, args.protein, args.docking_mode, args.exhaustiveness)
+        evaluate_one(path, args.protein, args.docking_mode, args.exhaustiveness, args.box_center)
         for path in iter_sdf_files(sdf_dir)
     ]
 
