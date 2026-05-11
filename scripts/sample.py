@@ -198,6 +198,7 @@ def main(args):
     aff = torch.tensor([float(config.model.aff)], device=args.device).unsqueeze(-1)
     batch_lab = torch.cat((logp, tpsa, sa, qed, aff), dim=1)
 
+    batch_size = args.batch_size if args.batch_size > 0 else config.sample.batch_size
     batch_lab = batch_lab[0]
 
     # # Bond predictor and guidance
