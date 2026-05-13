@@ -89,6 +89,44 @@ def pdb_to_pocket(pocket_pdb_path, ligand_sdf_path, frag_sdf_path):
 
     return data
 
+def save_generated_outputs(log_dir, name, mol_list, pool, dataset, logger=None):
+    sdf_dir = os.path.join(log_dir, f'{name}_SDF')
+    os.makedirs(sdf_dir, exist_ok=True)
+    for fn in os.listdir(sdf_dir):
+        stem, ext = os.path.splitext(fn)
+        if fn == 'log.txt' or (ext == '.sdf' and (stem.isdigit() or stem.startswith('traj_'))):
+            os.remove(os.path.join(sdf_dir, fn))
+
+    sorted_mol_list = sorted(mol_list, key=lambda mol: mol['mol_score'])
+    with open(os.path.join(sdf_dir, 'log.txt'), 'w') as f:
+        f.write('number, smiles, sa, qed, vina, score:' + '\n')
+        for i, data_finished in enumerate(sorted_mol_list):
+            f.write(str(i) + ', ' + data_finished['smiles'] + ', ' + str(data_finished['sa']) + ', ' +
+                    str(data_finished['qed']) + ', ' + str(data_finished['vina_score']) + ', ' + str(data_finished['mol_score']) + '\n')
+
+    with open(os.path.join(log_dir, 'SMILES.txt'), 'w') as smiles_f:
+        for i, data_finished in enumerate(sorted_mol_list):
+            smiles_f.write(data_finished['smiles'] + '\n')
+            rdmol = data_finished['rdmol']
+            try:
+                Chem.MolToMolFile(rdmol, os.path.join(sdf_dir, '%d.sdf' % (i)))
+            except:
+                continue
+
+            if 'traj' in data_finished:
+                writer = Chem.SDWriter(os.path.join(sdf_dir, 'traj_%d.sdf' % (i)))
+                for m in data_finished['traj']:
+                    try:
+                        writer.write(m)
+                    except:
+                        writer.write(Chem.MolFromSmiles('O'))
+                writer.close()
+
+    save_name = name.replace('/', '-') if dataset == 'crossdocked' else name
+    torch.save(pool, os.path.join(log_dir, f'samples_{save_name}.pt'))
+    if logger is not None:
+        logger.info('Saved %d generated molecules to %s' % (len(sorted_mol_list), sdf_dir))
+
 def cfg_get(config, key, default=None):
     return config[key] if key in config else default
 
@@ -409,38 +447,9 @@ def main(args):
                     # pool.finished.append(mol_info)
             pool.finished.extend(gen_list)
             print_pool_status(pool, logger)
+            save_generated_outputs(log_dir, name, mol_list, pool, config.data.dataset, logger)
 
-        # # Save sdf mols
-        sdf_dir = log_dir + '/'+ f'{name}_SDF'
-        os.makedirs(sdf_dir, exist_ok=True)
-        sorted_mol_list = sorted(mol_list, key=lambda mol: mol['mol_score'])
-        with open(os.path.join(sdf_dir, 'log.txt'), 'a') as f:
-            f.write('number, smiles, sa, qed, vina, score:' + '\n')
-            for i, data_finished in enumerate(sorted_mol_list):
-                f.write(str(i) + ', ' + data_finished['smiles'] + ', ' + str(data_finished['sa']) + ', ' + 
-                        str(data_finished['qed']) + ', ' + str(data_finished['vina_score']) + ', ' + str(data_finished['mol_score']) + '\n')
-        with open(os.path.join(log_dir, 'SMILES.txt'), 'a') as smiles_f:
-            for i, data_finished in enumerate(sorted_mol_list):
-                smiles_f.write(data_finished['smiles'] + '\n')
-                rdmol = data_finished['rdmol']
-                try:
-                    Chem.MolToMolFile(rdmol, os.path.join(sdf_dir, '%d.sdf' % (i)))
-                except:
-                    continue
-
-                if 'traj' in data_finished:
-                    writer = Chem.SDWriter(os.path.join(sdf_dir, 'traj_%d.sdf' % (i)))
-                    for m in data_finished['traj']:
-                        try:
-                            writer.write(m)
-                        except:
-                            writer.write(Chem.MolFromSmiles('O'))
-
-        if config.data.dataset == 'pdbbind':
-            torch.save(pool, os.path.join(log_dir, f'samples_{name}.pt'))
-        elif config.data.dataset == 'crossdocked':
-            name = name.replace('/', '-')
-            torch.save(pool, os.path.join(log_dir, f'samples_{name}.pt'))
+        save_generated_outputs(log_dir, name, mol_list, pool, config.data.dataset, logger)
 
 
 if __name__ == '__main__':
